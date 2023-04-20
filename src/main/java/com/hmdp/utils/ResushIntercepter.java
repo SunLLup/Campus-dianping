@@ -35,7 +35,7 @@ public class ResushIntercepter implements HandlerInterceptor {
 
         //用户存在，存入线程中
         UserHolder.saveUser(userDTO);
-
+        System.out.println(userDTO);
         return true;
     }
 

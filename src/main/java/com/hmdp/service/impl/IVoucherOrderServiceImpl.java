@@ -8,9 +8,13 @@ import com.hmdp.mapper.VoucherOrderMapper;
 import com.hmdp.service.ISeckillVoucherService;
 import com.hmdp.service.IVoucherOrderService;
 import com.hmdp.utils.RedisIdWorker;
+import com.hmdp.utils.SimpleRedisLock;
 import com.hmdp.utils.UserHolder;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.aop.framework.AopContext;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
@@ -21,6 +25,8 @@ public class IVoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vo
     ISeckillVoucherService iSeckillVoucherService;
     @Resource
     RedisIdWorker redisIdWorker;
+    @Resource
+    StringRedisTemplate stringRedisTemplate;
 
     @Override
     public Result killshop(Long voucherId) {
@@ -35,9 +41,36 @@ public class IVoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vo
         if(killVoucher.getStock()<=0){
             return Result.fail("已抢完");
         }
+        Long aLong = UserHolder.getUser().getId();
+        //todo 添加分布式锁
+        //通过构建方法传值
+        SimpleRedisLock simpleRedisLock = new SimpleRedisLock("order"+aLong, stringRedisTemplate);
 
+        try {
+
+            //获取锁
+            boolean lock = simpleRedisLock.tryLock(1200L);
+            if (!lock){
+                return Result.fail("每个用户只能买一次");
+            }
+
+            IVoucherOrderService proxy =(IVoucherOrderService)AopContext.currentProxy();
+            return  proxy.creatVoucherOrder(voucherId, killVoucher);
+        } catch (IllegalStateException e) {
+            throw new RuntimeException();
+        } finally {
+            simpleRedisLock.unlock();
+        }
+    }
+
+    @Transactional
+    public Result creatVoucherOrder(Long voucherId, SeckillVoucher killVoucher) {
         // todo 用户一对一秒杀券
-
+        Long aLong = UserHolder.getUser().getId();
+        Integer count = query().eq("user_id", aLong).eq("voucher_id", voucherId).count();
+        if (count > 0){
+            return Result.fail("用户已经抢到过一次");
+        }
 
 
         //库存建议
@@ -58,7 +91,7 @@ public class IVoucherOrderServiceImpl extends ServiceImpl<VoucherOrderMapper, Vo
         VoucherOrder voucherOrder1 = new VoucherOrder();
         voucherOrder1.setId(killvoucher);
         voucherOrder1.setVoucherId(killVoucher.getVoucherId());
-        voucherOrder1.setUserId(UserHolder.getUser().getId());
+        voucherOrder1.setUserId(aLong);
         voucherOrder1.setCreateTime(LocalDateTime.now());
 
         save(voucherOrder1);

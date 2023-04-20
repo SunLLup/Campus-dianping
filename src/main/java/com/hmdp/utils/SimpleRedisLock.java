@@ -9,52 +9,47 @@ import java.util.Collections;
 import java.util.concurrent.TimeUnit;
 
 public class SimpleRedisLock implements ILock {
-
     private String name;
     private StringRedisTemplate stringRedisTemplate;
+    private String KEY_PRELOCK="lock:";
+    private String KEY_UUID = UUID.randomUUID().toString(true);
+
+    //加载lua脚本
+    public static final DefaultRedisScript<Long> UNLOCK_SCRIPT;
+    static {
+        UNLOCK_SCRIPT=new DefaultRedisScript<>();
+        UNLOCK_SCRIPT.setLocation(new ClassPathResource("unlock.lua"));
+        UNLOCK_SCRIPT.setResultType(Long.class);
+    }
 
     public SimpleRedisLock(String name, StringRedisTemplate stringRedisTemplate) {
         this.name = name;
         this.stringRedisTemplate = stringRedisTemplate;
     }
 
-    private static final String KEY_PREFIX = "lock:";
-    private static final String ID_PREFIX = UUID.randomUUID().toString(true) + "-";
-    private static final DefaultRedisScript<Long> UNLOCK_SCRIPT;
-    static {
-        UNLOCK_SCRIPT = new DefaultRedisScript<>();
-        UNLOCK_SCRIPT.setLocation(new ClassPathResource("unlock.lua"));
-        UNLOCK_SCRIPT.setResultType(Long.class);
-    }
-
     @Override
     public boolean tryLock(long timeoutSec) {
-        // 获取线程标示
-        String threadId = ID_PREFIX + Thread.currentThread().getId();
-        // 获取锁
-        Boolean success = stringRedisTemplate.opsForValue()
-                .setIfAbsent(KEY_PREFIX + name, threadId, timeoutSec, TimeUnit.SECONDS);
-        return Boolean.TRUE.equals(success);
+        //添加标识
+        String id =KEY_UUID+Thread.currentThread().getId();
+        //添加锁
+        Boolean aBoolean = stringRedisTemplate.opsForValue().setIfAbsent(KEY_PRELOCK + name, id, timeoutSec, TimeUnit.SECONDS);
+        return Boolean.TRUE.equals(aBoolean);
     }
 
     @Override
     public void unlock() {
-        // 调用lua脚本
-        stringRedisTemplate.execute(
-                UNLOCK_SCRIPT,
-                Collections.singletonList(KEY_PREFIX + name),
-                ID_PREFIX + Thread.currentThread().getId());
+        //todo 利用lua脚本来释放锁，防止判断与执行之间的一个堵塞
+        stringRedisTemplate.execute(UNLOCK_SCRIPT,Collections.singletonList(KEY_PRELOCK+name),KEY_UUID+Thread.currentThread().getId());
+
+
+//        //获取标识
+//        String id =KEY_UUID+Thread.currentThread().getId();
+//        //获取当前锁标识
+//        String s = stringRedisTemplate.opsForValue().get(KEY_PRELOCK + name);
+//        //todo 判断，如果两个标识一样，标识处于同一线程
+//        if (id.equals(s)){
+//            stringRedisTemplate.delete(KEY_PRELOCK+name);
+//        }
+
     }
-    /*@Override
-    public void unlock() {
-        // 获取线程标示
-        String threadId = ID_PREFIX + Thread.currentThread().getId();
-        // 获取锁中的标示
-        String id = stringRedisTemplate.opsForValue().get(KEY_PREFIX + name);
-        // 判断标示是否一致
-        if(threadId.equals(id)) {
-            // 释放锁
-            stringRedisTemplate.delete(KEY_PREFIX + name);
-        }
-    }*/
 }
